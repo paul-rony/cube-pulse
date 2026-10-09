@@ -1,0 +1,6 @@
+{
+  "name": "Cube Pulse",
+  "description": "Every agent session open in your Cube at a glance: what each is doing, which are waiting for you, and what they made.",
+  "icon": "public/icon.svg",
+  "start": "node server.mjs"
+}
