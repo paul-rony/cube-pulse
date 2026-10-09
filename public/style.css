@@ -136,3 +136,9 @@ body.resizing iframe { pointer-events: none; }
   .app { grid-template-columns: 1fr; }
   .inner { padding: 28px 18px; }
 }
+
+/* ---- Back to the work ---- */
+.jump .find { margin: 0 0 8px; font-size: 13.5px; }
+.cmd { display: flex; align-items: center; gap: 6px; background: var(--code-bg); border-radius: 8px; padding: 6px 6px 6px 10px; }
+.cmd code { flex: 1; min-width: 0; font-size: 11.5px; overflow-wrap: anywhere; user-select: all; }
+.small { font-size: 12px; margin: 6px 0 0; }

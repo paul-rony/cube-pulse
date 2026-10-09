@@ -71,7 +71,7 @@ function card(s) {
   const more = s.assetCount - Math.min(s.assets.length, 6);
   return `<button class="sess${s.id === selected ? " on" : ""}" data-sid="${s.id}">
     <div class="top"><span class="dot ${s.status}"></span><b>${esc(s.title)}</b><span class="harness ${s.harness}">${HARNESS[s.harness]}</span><time title="${new Date(s.lastAt).toLocaleString()}">${ago(s.lastAt)}</time></div>
-    <div class="where mono">${esc(s.repo ?? "")}${s.branch ? ` · ${esc(s.branch)}` : ""}</div>
+    <div class="where mono">${esc(s.repo ?? "")}${s.branch ? ` · ${esc(s.branch)}` : ""}${s.cubeTitle && s.cubeTitle !== s.title ? ` · <span title="Its name in Cube's sidebar">“${esc(s.cubeTitle)}”</span>` : ""}</div>
     ${sum?.doing ? `<p class="doing">${esc(sum.doing)}</p>${sum.state ? `<p class="state${sum.needsYou && s.status !== "working" ? " needs" : ""}">${esc(sum.state)}</p>` : ""}` : s.lastAsk ? `<p class="asked">You asked: ${esc(s.lastAsk)}</p>` : ""}
     ${s.assets.length ? `<div class="thumbs">${s.assets.slice(0, 6).map((a) => thumb(a)).join("")}${more > 0 ? `<span class="more-assets">+${more}</span>` : ""}</div>` : ""}
   </button>`;
@@ -127,6 +127,11 @@ async function loadDetail() {
   renderRight();
 }
 
+function resumeCommand(s) {
+  const dir = s.dir ? `cd ${JSON.stringify(s.dir)} && ` : "";
+  return s.harness === "claude" ? `${dir}claude --resume ${s.transcriptId}` : `${dir}codex resume ${s.transcriptId}`;
+}
+
 // ---- Right -------------------------------------------------------------------------------------------------------
 
 function viewer(a) {
@@ -153,6 +158,14 @@ function renderRight() {
         <p class="title">${esc(s.title)}</p>
         <div class="where mono">${HARNESS[s.harness]} · ${esc(s.repo ?? "")}${s.branch ? ` · ${esc(s.branch)}` : ""}</div>
         <div class="path">${esc(s.dir ?? "")}</div>
+      </section>
+      <section class="jump">
+        <h3>Back to the work</h3>
+        <p class="find">In Cube: <b>${esc(s.repo ?? "")}</b> › <b>${esc(s.cubeTitle)}</b></p>
+        ${s.status === "working"
+          ? `<p class="muted small">It is working right now. Its Cube terminal is the place to follow it.</p>`
+          : `<div class="cmd"><code id="resumeCmd">${esc(resumeCommand(s))}</code><button class="icon" data-copy title="Copy">⧉</button></div>
+             <p class="muted small">Picks the same conversation up in a terminal. Its Cube terminal stays open, so prefer going back there when you can.</p>`}
       </section>
       ${sum?.doing ? `<section class="summary"><h3>What it's up to</h3><p>${esc(sum.doing)}</p>${sum.state ? `<p class="state${sum.needsYou && s.status !== "working" ? " needs" : ""}">${esc(sum.state)}</p>` : ""}</section>` : ""}
       ${shown ? `<section id="viewerSlot"></section>` : ""}
@@ -181,6 +194,15 @@ $("right").addEventListener("click", async (e) => {
   if (!b) return;
   if (b.dataset.deselect !== undefined) { selected = null; detail = null; showing = null; return render(); }
   if (b.dataset.close !== undefined) { showing = null; return renderRight(); }
+  if (b.dataset.copy !== undefined) {
+    const text = $("resumeCmd")?.textContent ?? "";
+    try { await navigator.clipboard.writeText(text); b.textContent = "✓"; } catch {
+      // The clipboard can be refused (an older app view); select the text instead.
+      const range = document.createRange(); range.selectNodeContents($("resumeCmd")); getSelection().removeAllRanges(); getSelection().addRange(range);
+    }
+    setTimeout(() => { b.textContent = "⧉"; }, 1500);
+    return;
+  }
   if (b.dataset.sid && b.dataset.sid !== selected) { selected = b.dataset.sid; showing = b.dataset.show; render(); return loadDetail(); }
   if (b.dataset.show) { showing = b.dataset.show; renderRight(); $("right").scrollTop = 0; }
 });
