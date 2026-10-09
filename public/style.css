@@ -172,3 +172,25 @@ body.resizing iframe { pointer-events: none; }
 .steps li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .steps .mono { font-size: 11.5px; }
 .working-now { display: flex; align-items: center; gap: 8px; color: var(--working); font-size: 13px; }
+
+/* ---- The morning post ---- */
+.brief { border: 1px solid var(--line); border-radius: 14px; background: var(--card); padding: 16px 18px 12px; display: grid; gap: 12px; }
+.brief-top { display: flex; align-items: center; gap: 6px; }
+.brief-top .sp, .brief-foot .sp { flex: 1; }
+.brief-kicker { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.small-t { font-size: 12px; margin-right: 4px; }
+.brief-headline { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.4; letter-spacing: -.01em; text-wrap: pretty; }
+.empty-brief .brief-headline { font-size: 15px; font-weight: 500; color: var(--muted); }
+.brief-sec h3 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.brief-sec h3::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--quiet); }
+.brief-sec.needs h3 { color: var(--ready); } .brief-sec.needs h3::before { background: var(--ready); }
+.brief-sec.running h3 { color: var(--working); } .brief-sec.running h3::before { background: var(--working); }
+.brief-sec ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.brief-sec li { display: grid; gap: 1px; font-size: 13.5px; line-height: 1.5; }
+.brief-link { border: 0; background: none; padding: 0; text-align: left; font-size: 13.5px; }
+.brief-link b { font-weight: 600; }
+.brief-link:hover b { text-decoration: underline; }
+.thumb-btn { border: 0; background: none; padding: 0; }
+.brief-foot { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line-soft); padding-top: 10px; font-size: 12.5px; color: var(--muted); }
+.brief-foot select { border: 1px solid var(--line); border-radius: 6px; background: var(--page); color: var(--text); font-size: 12px; padding: 1px 4px; }
+.icon:disabled { opacity: .35; cursor: default; }

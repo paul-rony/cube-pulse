@@ -12,6 +12,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ask } from "./lib/ask.mjs";
 import { timeline } from "./lib/timeline.mjs";
+import { Briefs } from "./lib/brief.mjs";
 import { assetsOf, claudeTranscript, codexTranscript, findDaemonDir, readCatalog, readTranscript, sessionsFrom } from "./lib/sources.mjs";
 
 const port = Number(process.env.PORT);
@@ -24,6 +25,7 @@ const POLL_MS = 5000;
 const RECENT_MS = 3 * 86_400_000; // sessions quiet for longer than this get no new summary
 
 const daemon = findDaemonDir();
+const briefs = new Briefs(STATE);
 const summaries = loadJson(join(STATE, "summaries.json"), {}); // session id -> { doing, state, needsYou, at, size }
 function loadJson(path, fallback) {
   try { return JSON.parse(readFileSync(path, "utf8")); } catch { return fallback; }
@@ -179,7 +181,16 @@ function json(res, status, body) {
 const server = createServer((req, res) => {
   const url = new URL(req.url, "http://local");
   const path = url.pathname;
-  if (req.method !== "GET" && req.method !== "HEAD") return json(res, 405, { error: "Pulse only looks." });
+  if (req.method === "POST") return post(req, res, path);
+  if (req.method !== "GET" && req.method !== "HEAD") return json(res, 405, { error: "Not here." });
+  if (path === "/api/briefs") return json(res, 200, { settings: briefs.settings, list: briefs.list(), writing: briefs.writing });
+  const bm = path.match(/^\/api\/briefs\/(\d{4}-\d{2}-\d{2})$/);
+  if (bm) {
+    const b = briefs.get(bm[1]);
+    if (!b) return json(res, 404, { error: "No post for that day." });
+    for (const a of b.made ?? []) briefFiles.add(a.path);
+    return json(res, 200, b);
+  }
   if (path === "/") return sendStatic(res, "index.html");
   if (/^\/[a-z0-9-]+\.(mjs|css|svg)$/.test(path)) return sendStatic(res, path.slice(1));
   if (path === "/api/events") {
@@ -211,7 +222,7 @@ const server = createServer((req, res) => {
   if (path === "/file") {
     // Only files Pulse attributed to a session, served as they are.
     const p = url.searchParams.get("path") ?? "";
-    if (!allowed.has(p)) return json(res, 404, { error: "Not a file Pulse knows." });
+    if (!allowed.has(p) && !briefFiles.has(p)) return json(res, 404, { error: "Not a file Pulse knows." });
     try {
       const st = lstatSync(p);
       if (!st.isFile()) throw new Error();
@@ -224,6 +235,46 @@ const server = createServer((req, res) => {
   }
   json(res, 404, { error: "Not found." });
 });
+
+// ---- The morning brief ------------------------------------------------------------------------------------------
+
+const briefFiles = new Set(); // files a post shows, which may outlive their session
+
+function sameOrigin(req) {
+  const o = req.headers.origin;
+  if (!o) return true;
+  try { return new URL(o).host === req.headers.host; } catch { return false; }
+}
+
+async function post(req, res, path) {
+  if (!sameOrigin(req)) return json(res, 403, { error: "Cross-origin request refused." });
+  let body = "";
+  for await (const c of req) { body += c; if (body.length > 10_000) return json(res, 413, { error: "Too large." }); }
+  let b = {};
+  try { b = body ? JSON.parse(body) : {}; } catch { return json(res, 400, { error: "The request body must be JSON." }); }
+  // Pulse writes nothing to your sessions; these only touch its own settings and its morning post.
+  if (path === "/api/settings") return json(res, 200, briefs.saveSettings(b));
+  if (path === "/api/brief") {
+    if (briefs.writing) return json(res, 409, { error: "A post is already being written." });
+    writeBrief().catch(() => {});
+    return json(res, 200, { ok: true });
+  }
+  json(res, 404, { error: "Not found." });
+}
+
+async function writeBrief() {
+  send({ type: "brief-writing" });
+  try {
+    const sessions = view.sessions.map((s) => ({ ...s, assets: details.get(s.id)?.assets ?? s.assets }));
+    const b = await briefs.write(sessions, summaries, ask);
+    if (b) send({ type: "brief", date: b.date });
+  } catch (err) {
+    send({ type: "brief-failed", error: err.message });
+  }
+}
+
+// Once a minute: is it past your hour, with no post yet today?
+setInterval(() => { if (briefs.due() && view.sessions.length) writeBrief(); }, 60_000);
 
 function sendStatic(res, name) {
   try {

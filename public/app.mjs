@@ -96,6 +96,7 @@ function renderPage() {
     <div class="meta"><span>${esc(project ?? "All projects")}</span><span>·</span><span>${esc(when)}</span></div>
     <h1 class="headline">${bits.length ? esc(bits.join(", ")) : "All quiet"}</h1>
     <p class="lede">${needYou ? `${needYou} ${needYou === 1 ? "is" : "are"} waiting on an answer from you. ` : ""}${list.length} session${list.length === 1 ? "" : "s"} open${project ? "" : ` across ${view.projects.length} project${view.projects.length === 1 ? "" : "s"}`}.</p>
+    ${briefCard()}
     <section class="group"><h2><span class="dot working"></span>Working now <span class="count">${working.length}</span></h2>
       ${working.length ? `<div class="cards">${working.map(card).join("")}</div>` : `<p class="empty">Nothing is running right now.</p>`}</section>
     <section class="group"><h2><span class="dot ready"></span>Ready for you <span class="count">${ready.length}</span></h2>
@@ -108,8 +109,22 @@ function renderPage() {
 $("page").addEventListener("click", (e) => {
   if (e.target.closest("[data-back]")) return closeSession();
   if (e.target.closest("[data-earlier]")) return loadEarlier();
+  const nav = e.target.closest("[data-brief-nav]");
+  if (nav) return nav.dataset.briefNav && loadBriefs(nav.dataset.briefNav);
+  if (e.target.closest("[data-brief-write]")) {
+    briefError = null;
+    briefs.writing = true;
+    renderPage();
+    fetch("/api/brief", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => {});
+    return;
+  }
   const b = e.target.closest("[data-sid]");
-  if (b) select(b.dataset.sid);
+  if (b) { const show = b.dataset.show; select(b.dataset.sid).then(() => { if (show) { showing = show; renderRight(); } }); }
+});
+$("page").addEventListener("change", async (e) => {
+  if (e.target.id !== "briefHour") return;
+  briefs.settings = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hour: Number(e.target.value) }) }).then((x) => x.json()).catch(() => briefs.settings);
+  renderPage();
 });
 $("page").addEventListener("toggle", (e) => {
   if (e.target.matches?.("details.earlier")) { showEarlier = e.target.open; store.set("pulse.earlier", showEarlier); }
@@ -130,6 +145,59 @@ function closeSession() {
   clearInterval(convo?.timer);
   convo = null;
   render();
+}
+
+// ---- The morning post -----------------------------------------------------------------------------------------
+
+let briefs = { list: [], settings: null, writing: false };
+let brief = null; // the post shown
+let briefError = null;
+
+async function loadBriefs(date = null) {
+  const r = await fetch("/api/briefs").then((x) => x.json()).catch(() => null);
+  if (!r) return;
+  briefs = r;
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (tz && r.settings?.tz !== tz) {
+    briefs.settings = await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tz }) }).then((x) => x.json()).catch(() => r.settings);
+  }
+  const want = date ?? brief?.date ?? r.list[0]?.date;
+  brief = want ? await fetch(`/api/briefs/${want}`).then((x) => (x.ok ? x.json() : null)).catch(() => null) : null;
+  if (!selected) renderPage();
+}
+
+function briefCard() {
+  const hour = briefs.settings?.hour ?? 7;
+  const hourSelect = `<select id="briefHour" title="When to write it">${Array.from({ length: 24 }, (_, h) => `<option value="${h}"${h === hour ? " selected" : ""}>${String(h).padStart(2, "0")}:00</option>`).join("")}</select>`;
+  const writeBtn = `<button class="ghost-btn" data-brief-write ${briefs.writing ? "disabled" : ""}>${briefs.writing ? "Writing…" : "Write it now"}</button>`;
+  const foot = `<div class="brief-foot"><span>A new post every day at ${hourSelect}</span><span class="sp"></span>${writeBtn}</div>`;
+  if (!brief) {
+    return `<section class="brief empty-brief"><div class="brief-top"><span class="brief-kicker">Morning post</span></div>
+      <p class="brief-headline">${briefs.writing ? "Writing your first post…" : `Your first post arrives at ${String(hour).padStart(2, "0")}:00: what your sessions did since, which need you, and what they made.`}</p>
+      ${briefError ? `<p class="state needs">${esc(briefError)}</p>` : ""}${foot}</section>`;
+  }
+  const idx = briefs.list.findIndex((x) => x.date === brief.date);
+  const older = briefs.list[idx + 1]?.date, newer = idx > 0 ? briefs.list[idx - 1]?.date : null;
+  const day = new Date(`${brief.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+  const written = new Date(brief.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const item = (x) => {
+    const t = brief.titles?.[x.session];
+    return `<li><button class="brief-link" data-sid="${esc(x.session)}"><b>${esc(t?.title ?? "A session")}</b>${t?.repo ? `<span class="mono muted"> ${esc(t.repo)}</span>` : ""}</button><span>${esc(x.text)}</span></li>`;
+  };
+  const section = (cls, label, list) => (list?.length ? `<div class="brief-sec ${cls}"><h3>${label}</h3><ul>${list.map(item).join("")}</ul></div>` : "");
+  return `<section class="brief">
+    <div class="brief-top"><span class="brief-kicker">Morning post · ${esc(day)}</span><span class="sp"></span>
+      <span class="muted small-t">written ${esc(written)}</span>
+      <button class="icon" data-brief-nav="${older ?? ""}" ${older ? "" : "disabled"} title="The day before">‹</button>
+      <button class="icon" data-brief-nav="${newer ?? ""}" ${newer ? "" : "disabled"} title="The day after">›</button></div>
+    <p class="brief-headline">${esc(brief.headline)}</p>
+    ${section("needs", "Needs you", brief.needsYou)}
+    ${section("over", "Since the last post", brief.overnight)}
+    ${section("running", "Still running", brief.running)}
+    ${brief.made?.length ? `<div class="brief-sec"><h3>Made since the last post</h3><div class="thumbs">${brief.made.slice(0, 10).map((a) => `<button class="thumb-btn" data-sid="${esc(a.sid)}" data-show="${esc(a.path)}" title="${esc(a.name)} · ${esc(a.from)}">${thumb(a)}</button>`).join("")}${brief.made.length > 10 ? `<span class="more-assets">+${brief.made.length - 10}</span>` : ""}</div></div>` : ""}
+    ${briefError ? `<p class="state needs">${esc(briefError)}</p>` : ""}
+    ${foot}
+  </section>`;
 }
 
 // ---- One session's conversation, on the middle page ---------------------------------------------------------
@@ -355,6 +423,9 @@ function render() {
 const es = new EventSource("/api/events");
 es.onmessage = (m) => {
   const ev = JSON.parse(m.data);
+  if (ev.type === "brief-writing") { briefs.writing = true; briefError = null; if (!selected) renderPage(); return; }
+  if (ev.type === "brief-failed") { briefs.writing = false; briefError = `The post could not be written: ${ev.error}`; if (!selected) renderPage(); return; }
+  if (ev.type === "brief") { briefs.writing = false; brief = null; loadBriefs(ev.date); return; }
   if (ev.type !== "view") return;
   view = ev.view;
   if (project && !view.projects.some((p) => p.name === project)) project = null;
@@ -363,5 +434,6 @@ es.onmessage = (m) => {
   // A selected session's details move on too; fetch them again (the viewer stays as it is).
   if (selected) loadDetail(); else renderRight();
 };
+loadBriefs();
 // Times on the page ("5m") age even when nothing changes.
 setInterval(() => { if (view && !document.hidden) renderPage(); }, 60_000);
