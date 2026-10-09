@@ -8,7 +8,9 @@ A Cube app that keeps track of the agent sessions open in your Cube, for when ma
   written by a small model from its recent conversation, and rewritten only when the session has moved on.
 - **What each made**: images, pages, videos, PDFs and 3D models it wrote, or named and changed while open, with
   thumbnails and a viewer. "Made lately" gathers them across all sessions.
-- **The detail of one session**: its summary, what you asked last, its latest reply, and everything it made.
+- **One session, without leaving Pulse**: its conversation on the middle page, your messages, its replies and the steps
+  it took in between (folded into one line each), following it live while it works, with earlier history a page at a
+  time. Beside it, its summary and everything it made. Pulse shows sessions; it does not type into them.
 
 Pulse only looks. It reads Cube's catalog (the daemon's `catalog.json`: titles, folders, which sessions are working
 and which have finished a turn) and each session's own transcript (`~/.claude/projects/…`, `~/.codex/sessions/…`),

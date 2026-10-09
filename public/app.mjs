@@ -80,6 +80,7 @@ function card(s) {
 function renderPage() {
   const page = $("page");
   if (!view) return;
+  if (selected && convo?.sid === selected) return renderConversation();
   if (view.error) { page.innerHTML = `<div class="inner"><div class="notice">${esc(view.error)}</div></div>`; return; }
   const list = view.sessions.filter((s) => project === null || (s.repo ?? "Elsewhere") === project);
   const working = list.filter((s) => s.status === "working");
@@ -89,7 +90,8 @@ function renderPage() {
   const now = new Date();
   const when = `${now.toLocaleDateString(undefined, { weekday: "long" })} ${now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
   const bits = [working.length && `${working.length} working`, ready.length && `${ready.length} ready for you`].filter(Boolean);
-  const scroll = page.scrollTop;
+  const scroll = page.dataset.mode === "list" ? page.scrollTop : listScroll;
+  page.dataset.mode = "list";
   page.innerHTML = `<div class="glow" aria-hidden="true"></div><div class="inner">
     <div class="meta"><span>${esc(project ?? "All projects")}</span><span>·</span><span>${esc(when)}</span></div>
     <h1 class="headline">${bits.length ? esc(bits.join(", ")) : "All quiet"}</h1>
@@ -104,6 +106,8 @@ function renderPage() {
 }
 
 $("page").addEventListener("click", (e) => {
+  if (e.target.closest("[data-back]")) return closeSession();
+  if (e.target.closest("[data-earlier]")) return loadEarlier();
   const b = e.target.closest("[data-sid]");
   if (b) select(b.dataset.sid);
 });
@@ -112,11 +116,130 @@ $("page").addEventListener("toggle", (e) => {
 }, true);
 
 async function select(id) {
-  if (selected === id) { selected = null; detail = null; showing = null; return render(); }
+  if (selected === id) return closeSession();
+  if (!selected) listScroll = $("page").scrollTop;
   selected = id;
   showing = null;
+  openConversation(id);
   render();
   await loadDetail();
+}
+
+function closeSession() {
+  selected = null; detail = null; showing = null;
+  clearInterval(convo?.timer);
+  convo = null;
+  render();
+}
+
+// ---- One session's conversation, on the middle page ---------------------------------------------------------
+
+let convo = null; // { sid, entries, from, to, start, timer, openSteps }
+let listScroll = 0;
+
+async function fetchConversation(sid, query = "") {
+  const res = await fetch(`/api/sessions/${sid}/conversation${query}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "The conversation could not be read.");
+  return res.json();
+}
+
+async function openConversation(sid) {
+  clearInterval(convo?.timer);
+  convo = { sid, entries: null, from: null, to: null, start: false, openSteps: new Set(), error: null, timer: null };
+  try {
+    const r = await fetchConversation(sid);
+    if (convo?.sid !== sid) return;
+    Object.assign(convo, { entries: r.entries, from: r.from, to: r.to, start: r.from === 0 });
+  } catch (err) {
+    if (convo?.sid === sid) convo.error = err.message;
+  }
+  renderPage();
+  scrollToEnd();
+  // Follow the end while it is open: what the session adds shows up within a few seconds.
+  convo.timer = setInterval(async () => {
+    if (!convo || convo.sid !== sid || convo.to === null || document.hidden) return;
+    try {
+      const r = await fetchConversation(sid, `?from=${convo.to}`);
+      if (convo?.sid !== sid || r.to === convo.to) return;
+      const page = $("page");
+      const atEnd = page.scrollHeight - page.scrollTop - page.clientHeight < 120;
+      convo.entries.push(...r.entries);
+      convo.to = r.to;
+      renderPage();
+      if (atEnd) scrollToEnd();
+    } catch {}
+  }, 3000);
+}
+
+async function loadEarlier() {
+  if (!convo || convo.start) return;
+  const sid = convo.sid;
+  const r = await fetchConversation(sid, `?to=${convo.from}`);
+  if (convo?.sid !== sid) return;
+  const page = $("page");
+  const fromBottom = page.scrollHeight - page.scrollTop;
+  convo.entries.unshift(...r.entries);
+  convo.from = r.from;
+  convo.start = r.from === 0;
+  renderPage();
+  page.scrollTop = page.scrollHeight - fromBottom; // keep what was in view where it was
+}
+
+function scrollToEnd() {
+  const page = $("page");
+  page.scrollTop = page.scrollHeight;
+}
+
+function stepsSummary(steps) {
+  const n = (...verbs) => steps.filter((x) => verbs.includes(x.verb)).length;
+  const ran = n("ran"), changed = n("edited", "wrote", "deleted"), looked = n("read", "searched for", "looked for", "fetched", "searched the web for");
+  const parts = [];
+  if (ran) parts.push(`ran ${ran} command${ran > 1 ? "s" : ""}`);
+  if (changed) parts.push(`changed ${changed} file${changed > 1 ? "s" : ""}`);
+  if (looked) parts.push(`looked at ${looked} thing${looked > 1 ? "s" : ""}`);
+  const other = steps.length - ran - changed - looked;
+  if (other) parts.push(`${other} other step${other > 1 ? "s" : ""}`);
+  return parts.join(" · ");
+}
+
+function renderConversation() {
+  const page = $("page");
+  const s = view.sessions.find((x) => x.id === selected);
+  if (!s) return closeSession();
+  const keepScroll = page.dataset.mode === "convo" ? page.scrollTop : null;
+  const open = new Set([...page.querySelectorAll("details.steps[open]")].map((d) => d.dataset.key));
+  if (page.dataset.mode === "convo") convo.openSteps = open;
+  page.dataset.mode = "convo";
+  const name = HARNESS[s.harness];
+  let body = "";
+  if (convo.error) body = `<div class="notice">${esc(convo.error)}</div>`;
+  else if (!convo.entries) body = `<p class="muted center">Reading the conversation…</p>`;
+  else {
+    const out = [];
+    for (let i = 0; i < convo.entries.length; i++) {
+      const e = convo.entries[i];
+      if (e.kind === "step") {
+        const run = [];
+        while (i < convo.entries.length && convo.entries[i].kind === "step") run.push(convo.entries[i++]);
+        i--;
+        const key = `${run[0].at}:${run[0].what}`;
+        out.push(`<details class="steps" data-key="${esc(key)}"${convo.openSteps.has(key) ? " open" : ""}><summary>${esc(stepsSummary(run))}</summary><ul>${run.map((x) => `<li>${esc(x.verb)} <span class="mono">${esc(x.what)}</span></li>`).join("")}</ul></details>`);
+        continue;
+      }
+      const mine = e.kind === "you";
+      out.push(`<div class="msg ${mine ? "you" : "agent"}"><div class="who"><b>${mine ? "You" : name}</b>${e.at ? `<time>${new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}</time>` : ""}</div><div class="body">${mine ? `<p class="plain">${esc(e.text.length > 4000 ? `${e.text.slice(0, 4000)}…` : e.text)}</p>` : md(e.text)}</div></div>`);
+    }
+    body = (convo.start ? `<p class="muted center small">The beginning of this conversation.</p>` : `<p class="center"><button class="ghost-btn" data-earlier>Show earlier</button></p>`)
+      + out.join("")
+      + (s.status === "working" ? `<div class="working-now"><span class="dot working"></span>${name} is working…</div>` : "");
+  }
+  page.innerHTML = `<header class="convo-head">
+      <button class="icon back" data-back title="Back to all sessions">←</button>
+      <div class="ch-main"><b>${esc(s.title)}</b><span class="where mono">${esc(s.repo ?? "")}${s.branch ? ` · ${esc(s.branch)}` : ""}</span></div>
+      <span class="harness ${s.harness}">${name}</span><span class="dot ${s.status}" title="${{ working: "Working now", ready: "Ready for you", quiet: "Earlier" }[s.status]}"></span>
+    </header>
+    <div class="convo">${body}</div>`;
+  if (keepScroll !== null) page.scrollTop = keepScroll;
 }
 
 async function loadDetail() {
@@ -192,7 +315,7 @@ function renderRight() {
 $("right").addEventListener("click", async (e) => {
   const b = e.target.closest("button");
   if (!b) return;
-  if (b.dataset.deselect !== undefined) { selected = null; detail = null; showing = null; return render(); }
+  if (b.dataset.deselect !== undefined) return closeSession();
   if (b.dataset.close !== undefined) { showing = null; return renderRight(); }
   if (b.dataset.copy !== undefined) {
     const text = $("resumeCmd")?.textContent ?? "";
@@ -203,7 +326,7 @@ $("right").addEventListener("click", async (e) => {
     setTimeout(() => { b.textContent = "⧉"; }, 1500);
     return;
   }
-  if (b.dataset.sid && b.dataset.sid !== selected) { selected = b.dataset.sid; showing = b.dataset.show; render(); return loadDetail(); }
+  if (b.dataset.sid && b.dataset.sid !== selected) { await select(b.dataset.sid); showing = b.dataset.show; return renderRight(); }
   if (b.dataset.show) { showing = b.dataset.show; renderRight(); $("right").scrollTop = 0; }
 });
 

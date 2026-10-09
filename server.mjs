@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ask } from "./lib/ask.mjs";
+import { timeline } from "./lib/timeline.mjs";
 import { assetsOf, claudeTranscript, codexTranscript, findDaemonDir, readCatalog, readTranscript, sessionsFrom } from "./lib/sources.mjs";
 
 const port = Number(process.env.PORT);
@@ -72,7 +73,7 @@ function look() {
     const lastAt = Math.max(r.lastAt || 0, s.turnEndedAt || 0, r.mtime || 0);
     const status = s.working ? "working" : r.lastRole === "assistant" && Date.now() - lastAt < 2 * 86_400_000 ? "ready" : "quiet";
     const sum = summaries[s.id];
-    details.set(s.id, { asks: r.asks.slice(-5), replies: r.replies.slice(-3), assets });
+    details.set(s.id, { asks: r.asks.slice(-5), replies: r.replies.slice(-3), assets, path, harness: s.harness });
     sessions.push({
       ...s, status, lastAt, branch: branchOf(s.dir), size: r.size, lastRole: r.lastRole,
       title: s.title || firstWords(r.asks[0]?.text) || s.repo || "Untitled session",
@@ -187,6 +188,18 @@ const server = createServer((req, res) => {
     streams.add(res);
     req.on("close", () => streams.delete(res));
     return;
+  }
+  // A slice of a session's conversation: ?from=<offset> for what came after, ?to=<offset> for what came before.
+  const cm = path.match(/^\/api\/sessions\/([\w-]+)\/conversation$/);
+  if (cm) {
+    const d = details.get(cm[1]);
+    if (!d?.path) return json(res, 404, { error: "No such session open in Cube." });
+    const num = (k) => (url.searchParams.has(k) ? Number(url.searchParams.get(k)) : null);
+    try {
+      return json(res, 200, timeline(d.path, d.harness, { from: num("from"), to: num("to") }));
+    } catch (err) {
+      return json(res, 500, { error: `The conversation could not be read: ${err.message}` });
+    }
   }
   const sm = path.match(/^\/api\/sessions\/([\w-]+)$/);
   if (sm) {
