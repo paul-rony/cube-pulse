@@ -334,48 +334,102 @@ function viewer(a) {
   return `<div class="viewer" data-path="${esc(a.path)}"><div class="bar"><span class="nm" title="${esc(a.path)}">${esc(a.name)}</span><a class="icon" href="${url}" target="_blank" rel="noopener" title="Open in a new tab">↗</a><button class="icon" data-close title="Close">×</button></div>${body}</div>`;
 }
 
+// One line per event, about as tall as a row in Cube's apps list.
+const EV_ICON = { "pr-opened": ["⇡", "ev-pr"], "pr-merged": ["✓", "ev-merged"], "pr-closed": ["✕", "ev-closed"], commit: ["•", "ev-commit"], turn: ["◷", "ev-turn"] };
+
+function eventRow(e, inSession = false) {
+  let icon, main, rest = "", attrs = "", tag = "button";
+  if (e.kind === "file") {
+    icon = e.file === "image" ? `<img class="ev-thumb" src="${fileUrl(e.path)}" alt="" loading="lazy">` : `<span class="ev-ic ev-file">${{ page: "◇", video: "▶", pdf: "▤", model: "◆" }[e.file] ?? "◇"}</span>`;
+    main = e.name;
+    rest = inSession ? "" : e.session;
+    attrs = `data-sid="${esc(e.sid)}" data-show="${esc(e.path)}"`;
+  } else {
+    const [g, cls] = EV_ICON[e.kind] ?? ["•", ""];
+    icon = `<span class="ev-ic ${cls}${e.kind === "turn" && e.needsYou ? " ev-needs" : ""}">${g}</span>`;
+    if (e.kind.startsWith("pr-")) {
+      main = `${{ "pr-opened": e.draft ? "Draft PR" : "Opened PR", "pr-merged": "Merged PR", "pr-closed": "Closed PR" }[e.kind]} #${e.number}`;
+      rest = e.title;
+      tag = "a";
+      attrs = `href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(`${e.repo}: ${e.title}`)}"`;
+    } else if (e.kind === "commit") {
+      main = e.title;
+      rest = e.repo ?? "";
+      tag = e.sid && !inSession ? "button" : "div";
+      attrs = e.sid && !inSession ? `data-sid="${esc(e.sid)}"` : "";
+    } else {
+      main = inSession ? (e.needsYou ? "Finished, waiting on you" : "Finished its turn") : e.session;
+      rest = inSession ? "" : e.needsYou ? "waiting on you" : "finished its turn";
+      attrs = inSession ? "" : `data-sid="${esc(e.sid)}"`;
+      if (inSession) tag = "div";
+    }
+  }
+  return `<${tag} class="ev" ${attrs}>${icon}<span class="ev-t"><span class="ev-main">${esc(main)}</span>${rest ? `<span class="ev-rest">${esc(rest)}</span>` : ""}</span><time>${ago(e.at)}</time></${tag}>`;
+}
+
+function dayLabel(t) {
+  const d = new Date(t), today = new Date();
+  const days = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 86_400_000);
+  return days === 0 ? "Today" : days === 1 ? "Yesterday" : d.toLocaleDateString(undefined, { weekday: "long" });
+}
+
+function timelineHtml(events, inSession = false) {
+  if (!events.length) return `<p class="muted small">Nothing in the last three days.</p>`;
+  let html = "", day = "";
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    const d = dayLabel(e.at);
+    if (d !== day) { html += `<div class="ev-day">${esc(d)}</div>`; day = d; }
+    // A run of commits in one project, on one day, is one line you can open.
+    const run = [e];
+    while (e.kind === "commit" && events[i + 1]?.kind === "commit" && events[i + 1].repo === e.repo && dayLabel(events[i + 1].at) === d) run.push(events[++i]);
+    if (run.length === 1) { html += eventRow(e, inSession); continue; }
+    const key = `${e.repo}:${e.at}`;
+    html += `<details class="ev-group" data-key="${esc(key)}"${openGroups.has(key) ? " open" : ""}><summary class="ev"><span class="ev-ic ev-commit">•</span><span class="ev-t"><span class="ev-main">${run.length} commits</span><span class="ev-rest">${esc(e.repo ?? "")} · ${esc(e.title)}</span></span><time>${ago(e.at)}</time></summary>${run.map((c) => eventRow(c, inSession)).join("")}</details>`;
+  }
+  return `<div class="timeline">${html}</div>`;
+}
+
+const openGroups = new Set();
+document.addEventListener("toggle", (e) => {
+  const g = e.target.closest?.(".ev-group");
+  if (g) g.open ? openGroups.add(g.dataset.key) : openGroups.delete(g.dataset.key);
+}, true);
+
 function renderRight() {
   const right = $("right");
   const scroll = right.scrollTop;
   // Keep an open viewer as it is, so a playing video or a page does not reload on every update.
   const kept = [...right.querySelectorAll(".viewer")].find((v) => v.dataset.path === showing) ?? null;
+  const all = view?.timeline ?? [];
   if (selected && detail) {
     const s = view.sessions.find((x) => x.id === selected) ?? detail;
     const sum = s.summary;
-    const shown = detail.assets.find((a) => a.path === showing);
+    const mine = all.filter((e) => e.sid === s.id);
     right.innerHTML = `
       <section>
         <h3><span class="dot ${s.status}"></span><span>${{ working: "Working now", ready: "Ready for you", quiet: "Earlier" }[s.status]}</span><span class="sp"></span><button class="icon" data-deselect title="Close">×</button></h3>
         <p class="title">${esc(s.title)}</p>
         <div class="where mono">${HARNESS[s.harness]} · ${esc(s.repo ?? "")}${s.branch ? ` · ${esc(s.branch)}` : ""}</div>
-        <div class="path">${esc(s.dir ?? "")}</div>
       </section>
       <section class="jump">
         <h3>Back to the work</h3>
         <p class="find">In Cube: <b>${esc(s.repo ?? "")}</b> › <b>${esc(s.cubeTitle)}</b></p>
         ${s.status === "working"
           ? `<p class="muted small">It is working right now. Its Cube terminal is the place to follow it.</p>`
-          : `<div class="cmd"><code id="resumeCmd">${esc(resumeCommand(s))}</code><button class="icon" data-copy title="Copy">⧉</button></div>
-             <p class="muted small">Picks the same conversation up in a terminal. Its Cube terminal stays open, so prefer going back there when you can.</p>`}
+          : `<div class="cmd"><code id="resumeCmd">${esc(resumeCommand(s))}</code><button class="icon" data-copy title="Copy">⧉</button></div>`}
       </section>
       ${sum?.doing ? `<section class="summary"><h3>What it's up to</h3><p>${esc(sum.doing)}</p>${sum.state ? `<p class="state${sum.needsYou && s.status !== "working" ? " needs" : ""}">${esc(sum.state)}</p>` : ""}</section>` : ""}
-      ${shown ? `<section id="viewerSlot"></section>` : ""}
-      ${detail.assets.length ? `<section><h3>Made in this session <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">${detail.assets.length}</span></h3><div class="gallery">${detail.assets.map((a) => `<button class="tile${a.path === showing ? " on" : ""}" data-show="${esc(a.path)}" title="${esc(a.path)}">${thumb(a, "pic")}<span class="nm">${esc(a.name)}</span><span class="from">${ago(a.at)} ago${a.how === "written" ? "" : " · named"}</span></button>`).join("")}</div></section>` : ""}
-      ${detail.asks.length ? `<section><h3>You asked</h3><ul class="asks">${detail.asks.slice(-3).reverse().map((a) => `<li class="${a.text.length > 400 ? "long" : ""}"><time>${ago(a.at)} ago</time>${esc(a.text.slice(0, 1200))}</li>`).join("")}</ul></section>` : ""}
-      ${detail.replies.length ? `<section><h3>Its latest reply</h3><div class="reply"><time>${ago(detail.replies.at(-1).at)} ago</time>${md(detail.replies.at(-1).text.slice(0, 4000))}</div></section>` : ""}`;
+      ${showing ? `<section id="viewerSlot"></section>` : ""}
+      <section><h3>Timeline</h3>${timelineHtml(mine, true)}</section>`;
   } else {
-    // Nothing picked: everything made lately, newest first.
-    const list = (view?.sessions ?? []).filter((s) => project === null || (s.repo ?? "Elsewhere") === project);
-    // Each file once, credited to the session that touched it most recently.
-    const byPath = new Map();
-    for (const s of list) for (const a of s.assets) if (!byPath.has(a.path) || byPath.get(a.path).lastAt < s.lastAt) byPath.set(a.path, { ...a, sid: s.id, from: s.title, lastAt: s.lastAt });
-    const made = [...byPath.values()].sort((a, b) => b.at - a.at).slice(0, 36);
-    right.innerHTML = `<section><h3>Made lately</h3>${made.length ? `<div class="gallery">${made.map((a) => `<button class="tile" data-sid="${a.sid}" data-show="${esc(a.path)}" title="${esc(a.path)}">${thumb(a, "pic")}<span class="nm">${esc(a.name)}</span><span class="from">${esc(a.from)} · ${ago(a.at)}</span></button>`).join("")}</div>` : `<p class="muted">Images, pages, videos and documents your sessions make show up here.</p>`}</section>`;
+    const list = all.filter((e) => project === null || e.repo === project || (view.sessions.find((x) => x.id === e.sid)?.repo ?? null) === project);
+    right.innerHTML = `${showing ? `<section id="viewerSlot"></section>` : ""}<section><h3>Timeline</h3>${timelineHtml(list)}</section>`;
   }
   const slot = $("viewerSlot");
   if (slot) {
-    const a = detail.assets.find((x) => x.path === showing);
-    if (kept) slot.appendChild(kept); else slot.innerHTML = viewer(a);
+    const a = (detail?.assets ?? []).find((x) => x.path === showing) ?? (() => { const e = all.find((x) => x.path === showing); return e && { path: e.path, name: e.name, kind: e.file }; })();
+    if (kept) slot.appendChild(kept); else if (a) slot.innerHTML = viewer(a); else slot.remove();
   }
   right.scrollTop = scroll;
 }

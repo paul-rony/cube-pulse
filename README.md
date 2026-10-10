@@ -6,8 +6,11 @@ A Cube app that keeps track of the agent sessions open in your Cube, for when ma
   first, filterable by project.
 - **What each is up to**: two lines per session (what it is working on; where it stands or what it needs from you),
   written by a small model from its recent conversation, and rewritten only when the session has moved on.
-- **What each made**: images, pages, videos, PDFs and 3D models it wrote, or named and changed while open, with
-  thumbnails and a viewer. "Made lately" gathers them across all sessions.
+- **What each made**: images, pages, videos, PDFs and 3D models it wrote, or named and changed while open, as
+  thumbnails on its card, with a viewer.
+- **A timeline** beside the sessions, one short line per event: pull requests opened, merged or closed (found as links
+  in the sessions' conversations, their state from `gh`), files made with a small preview, commits in the sessions'
+  folders (a run of them folded into one line), and turns finished. Opening a session narrows it to that session.
 - **A morning post**: once a day, at the hour you choose in your own timezone (7:00 unless you change it), a short
   post on what your sessions did since the last one: what needs you, what got done, what is still running, and what
   they made. Written by the small model; earlier days stay readable, and **Write it now** makes one on demand.

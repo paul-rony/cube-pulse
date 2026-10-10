@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { ask } from "./lib/ask.mjs";
 import { timeline } from "./lib/timeline.mjs";
 import { Briefs } from "./lib/brief.mjs";
+import { buildTimeline } from "./lib/events.mjs";
 import { assetsOf, claudeTranscript, codexTranscript, findDaemonDir, readCatalog, readTranscript, sessionsFrom } from "./lib/sources.mjs";
 
 const port = Number(process.env.PORT);
@@ -75,7 +76,7 @@ function look() {
     const lastAt = Math.max(r.lastAt || 0, s.turnEndedAt || 0, r.mtime || 0);
     const status = s.working ? "working" : r.lastRole === "assistant" && Date.now() - lastAt < 2 * 86_400_000 ? "ready" : "quiet";
     const sum = summaries[s.id];
-    details.set(s.id, { asks: r.asks.slice(-5), replies: r.replies.slice(-3), assets, path, harness: s.harness });
+    details.set(s.id, { asks: r.asks.slice(-5), replies: r.replies.slice(-3), assets, path, harness: s.harness, prs: [...(r.prs ?? [])] });
     sessions.push({
       ...s, status, lastAt, branch: branchOf(s.dir), size: r.size, lastRole: r.lastRole,
       title: s.title || firstWords(r.asks[0]?.text) || s.repo || "Untitled session",
@@ -94,8 +95,9 @@ function look() {
     if (s.status === "ready") p.ready++;
     projects.set(key, p);
   }
-  const next = { sessions, projects: [...projects.values()].sort((a, b) => b.working - a.working || b.ready - a.ready || b.count - a.count), error: null, at: Date.now() };
-  const hash = createHash("sha1").update(JSON.stringify([next.sessions.map((s) => [s.id, s.status, s.title, s.summary, s.assetCount, s.assets[0]?.at, s.branch, s.lastAsk]), next.error])).digest("hex");
+  const timeline = buildTimeline(sessions, (id) => ({ assets: details.get(id)?.assets ?? [], prs: details.get(id)?.prs ?? [] }));
+  const next = { sessions, projects: [...projects.values()].sort((a, b) => b.working - a.working || b.ready - a.ready || b.count - a.count), timeline, error: null, at: Date.now() };
+  const hash = createHash("sha1").update(JSON.stringify([next.sessions.map((s) => [s.id, s.status, s.title, s.summary, s.assetCount, s.assets[0]?.at, s.branch, s.lastAsk]), timeline.map((e) => [e.kind, e.at, e.title]), next.error])).digest("hex");
   view = next;
   if (hash !== look.hash) { look.hash = hash; send({ type: "view", view }); }
   queueSummaries();
